@@ -1,15 +1,17 @@
+#include <Keyboard.h>
+
 
 // The PINs for the In-/Output
 #define REMOTEPIN 11      // Pin for IR receiver (remote control)
 #define LEDPIN 13         // Pin for LED
 
 // the codes returned by getIRkey()
-#define MENU 1
-#define PLAY_PAUSE 2
-#define VOLUME_UP 5
-#define VOLUME_DOWN 6
-#define REWIND 4
-#define FAST_FORWARD 3
+#define MENU 3
+#define PLAY_PAUSE 5
+#define VOLUME_UP 10
+#define VOLUME_DOWN 12
+#define REWIND 9
+#define FAST_FORWARD 6
 #define KEY_DELAY 100
 
 // the keyboard keys sent to the usb-host
@@ -166,6 +168,10 @@ void loop() {
                     Serial.println("UPPPS");
                     Serial.println(IRkey);
             } // end switch
+                    Serial.print("key: ");
+
+                                Serial.println(IRkey);
+
         } else {
             if (pairingID != currentID) {
                 Serial.println("other remote used!");
@@ -176,91 +182,115 @@ void loop() {
 }
 
 
+
+
 /*
+The following function defines a new pulseIn function because the pulseIn function in the Arduino
+ library does not exit if there is a pulse that does not end. Typically, this would not cause any
+ problems if you are reading true pulses, but because the remote code I wrote measures "UP pulses"
+ there is a chance that some noise would trigger a single pulse where the current pulseIn function
+ would hang.
+ The reason is the following: the IR receiver when it is not receiving any signals outputs HIGH.
+ If there is a signal (a real pulse), it outputs LOW and then HIGH. If I were to measure DOWN pulses,
+ this would be fine, but because the NEC protocol in the Apple remote uses distance between pulses to
+ codify its information, I measure the time between pulses which is an "UP pulse". In reality these UP
+ pulses are not really pulses, but the time between the real pulses from the remote control.
+ This code is taken from the Arduino code base (thanks to users in the Arduino forum) and modified to
+ check for end of pulse
+ */
 
+unsigned long newpulseIn(uint8_t pin, uint8_t state, unsigned long timeout)
+{
+  uint8_t bit = digitalPinToBitMask(pin);
+  uint8_t port = digitalPinToPort(pin);
+  uint8_t stateMask = (state ? bit : 0);
+  unsigned long width = 0;
+
+  unsigned long numloops = 0;
+  unsigned long maxloops = microsecondsToClockCycles(timeout) / 16;
+
+  // wait for any previous pulse to end
+  while ((*portInputRegister(port) & bit) == stateMask)
+    if (numloops++ == maxloops)
+      return 0;
+
+  // wait for the pulse to start
+  while ((*portInputRegister(port) & bit) != stateMask)
+    if (numloops++ == maxloops)
+      return 0;
+
+  // wait for the pulse to stop
+  while ((*portInputRegister(port) & bit) == stateMask){
+    if(width++ == maxloops)  // added the check for end of pulse
+      return 0;
+  }
+  return clockCyclesToMicroseconds(width * 20+16); // Recalibrated because of additional code
+  // in the width loop
+} 
+
+
+/*
 The following function returns the code from the Apple Aluminum remote control. The Apple remote is
-based on the NEC infrared remote protocol. Of the 32 bits (4 bytes) coded in the protocol, only the
-third byte corresponds to the keys. The function also handles errors due to noise (returns 255) and
-the repeat code (returs zero)
-
-The Apple remote returns the following codes:
-
-Up key:     238 135 011 089
-Down key:   238 135 013 089
-Left key:   238 135 008 089
-Right key:  238 135 007 089
-Center key: 238 135 093 089 followed by 238 135 004 089 (See blog for why there are two codes)
-Menu key:   238 135 002 089
-Play key:   238 135 094 089 followed by 238 135 004 089
-
-(update) The value of the third byte varies from remote to remote. It turned out that the 8th bit
-is not part of the command, so if we only read the 7 most significant bits, the value is the same
-for all the remotes, including the white platic remote.
-
-The value for the third byte when we discard the least significant bit is:
-
-Up key:     238 135 005 089
-Down key:   238 135 006 089
-Left key:   238 135 004 089
-Right key:  238 135 003 089
-Center key: 238 135 046 089 followed by 238 135 002 089 (See blog for why there are two codes)
-Menu key:   238 135 001 089
-Play key:   238 135 047 089 followed by 238 135 002 089
-
-More info here: http://hifiduino.wordpress.com/apple-aluminum-remote/
-
-*/
+ based on the NEC infrared remote protocol. Of the 32 bits (4 bytes) coded in the protocol, only the
+ third byte corresponds to the keys. The function also handles errors due to noise (returns 255) and
+ the repeat code (returns zero)
+ 
+ The Apple remote returns the following codes:
+ 
+   Up key:     238 135 011 089
+   Down key:   238 135 013 089
+   Left key:   238 135 008 089
+   Right key:  238 135 007 089
+   Center key: 238 135 093 089 followed by 238 135 004 089 (don't know why there is two commands)
+   Menu key:   238 135 002 089
+   Play key:   238 135 094 089 followed by 238 135 004 089 (don't know why there is two commands)
+ */
 
 int getIRkey() {
+  c1=0;
+  c2=0;
+  c3=0;
+  c4=0;
+  duration=1;
+  while((duration=newpulseIn(REMOTEPIN, HIGH, 15000)) < 2000 && duration!=0)
+  {
+    // Wait for start pulse
+  }
+  if (duration == 0)         // This is an error no start or end of pulse
+    return(255);             // Use 255 as Error
 
-    c1=0;
-    c2=0;
-    c3=0;
-    c4=0;
-    duration=1;
-    while((duration=pulseIn(REMOTEPIN, HIGH, 15000)) < 2000 && duration!=0)
-    {
-        // Wait for start pulse
+  else if (duration<3000)    // This is the repeat
+    return (0);              // Use zero as the repeat code
+
+  else if (duration<5000){   // This is the command get the 4 byte
+    mask = 1;            
+    for (int i = 0; i < 8; i++){               // get 8 bits
+      if(newpulseIn(REMOTEPIN, HIGH, 3000)>1000)     // If "1" pulse
+        c1 |= mask;                  // Put the "1" in position
+      mask <<= 1;            // shift mask to next bit
     }
-    if (duration == 0)           // This is an error no start or end of pulse
-        return(255);             // Use 255 as Error
-
-    else if (duration < 3000)    // This is the repeat
-        return (0);              // Use zero as the repeat code
-
-    else if (duration < 5000){   // This is the command get the 4 byte
-        mask = 1;
-        for (int i = 0; i < 8; i++){                   // get 8 bits
-            if(pulseIn(REMOTEPIN, HIGH, 3000)>1000)    // If "1" pulse
-                c1 |= mask;                            // Put the "1" in position
-            mask <<= 1;                                // shift mask to next bit
-        }
-        mask = 1;
-        for (int i = 0; i < 8; i++){                   // get 8 bits
-            if(pulseIn(REMOTEPIN, HIGH, 3000)>1000)    // If "1" pulse
-                c2 |= mask;                            // Put the "1" in position
-            mask <<= 1;                                // shift mask to next bit
-        }
-        mask = 1;
-        for (int i = 0; i < 8; i++){                   // get 8 bits
-            if(pulseIn(REMOTEPIN, HIGH, 3000)>1000)    // If "1" pulse
-                c3 |= mask;                            // Put the "1" in position
-            mask <<= 1;                                // shift mask to next bit
-        }
-        mask = 1;
-        for (int i = 0; i < 8; i++){                   // get 8 bits
-            if(pulseIn(REMOTEPIN, HIGH, 3000)>1000)    // If "1" pulse
-                c4 |= mask;                            // Put the "1" in position
-            mask <<= 1;                                // shift mask to next bit
-        }
-        // Serial.println(c1, HEX); //For debugging
-        // Serial.println(c2, HEX); //For debugging
-        // Serial.println(c3, HEX); //For debugging
-        // Serial.println(c4, HEX); //For debugging  -->> differ from remote to remote
-
-        currentID = c4;
-
-        c3 >>= 1;                                      // Discard the least significant bit
-        return(c3);
+    mask = 1;           
+    for (int i = 0; i < 8; i++){               // get 8 bits
+      if(newpulseIn(REMOTEPIN, HIGH, 3000)>1000)     // If "1" pulse
+        c2 |= mask;                  // Put the "1" in position
+      mask <<= 1;            // shift mask to next bit
     }
+    mask = 1;           
+    for (int i = 0; i < 8; i++){               // get 8 bits
+      if(newpulseIn(REMOTEPIN, HIGH, 3000)>1000)     // If "1" pulse
+        c3 |= mask;                  // Put the "1" in position
+      mask <<= 1;            // shift mask to next bit
+    }
+    mask = 1;           
+    for (int i = 0; i < 8; i++){               // get 8 bits
+      if(newpulseIn(REMOTEPIN, HIGH, 3000)>1000)     // If "1" pulse
+        c4 |= mask;                  // Put the "1" in position
+      mask <<= 1;            // shift mask to next bit
+    }
+    // Serial.println(c1, HEX); //For debugging
+    // Serial.println(c2, HEX); //For debugging
+    // Serial.println(c3, HEX); //For debugging
+    // Serial.println(c4, HEX); //For debugging
+    return(c3);
+  }
 }
