@@ -118,6 +118,12 @@ void loop() {
             }
         }
 
+        Serial.print("remote: ");
+        Serial.print(currentID);
+
+        Serial.print(" key: ");
+        Serial.println(IRkey);
+
         if (pairingID == -1 || pairingID == currentID) {
 
             switch(IRkey){
@@ -168,9 +174,7 @@ void loop() {
                     Serial.println("UPPPS");
                     Serial.println(IRkey);
             } // end switch
-                    Serial.print("key: ");
 
-                                Serial.println(IRkey);
 
         } else {
             if (pairingID != currentID) {
@@ -290,7 +294,10 @@ int getIRkey() {
     // Serial.println(c1, HEX); //For debugging
     // Serial.println(c2, HEX); //For debugging
     // Serial.println(c3, HEX); //For debugging
-    // Serial.println(c4, HEX); //For debugging
+    // Serial.println(c4, HEX); //For debugging -->> differ from remote to remote
+
+    currentID = c4;
+
     return(c3);
   }
 }
